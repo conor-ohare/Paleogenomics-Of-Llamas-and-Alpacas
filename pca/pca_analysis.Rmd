@@ -1,0 +1,437 @@
+---
+title: "PCA for Thesis"
+author: "Conor O'Hare"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+knit("input.Rmd") 
+
+```
+
+Import libraries
+
+```{r}
+# Import modules
+library(tidyverse)
+library(ggplot2)
+library(scales)
+
+```
+
+#### Read in data
+
+We collate the modern, ancient, and damaged modern samples:
+
+```{r}
+# Given samples
+modern <- read_csv("modern.csv")
+ancient <- read_csv("ancient.csv")
+
+
+
+# List of damaged individuals
+damaged <- list("SRR11905246", "SRR11905247", 
+                "SRR11905250", "SRR11905251", 
+                "SRR11905255", "SRR11905256",
+                "SRR11905266", "SRR11905267",
+                "SRR11905260", "SRR11905262",
+                "SRR11905273")
+
+# No down-sampling for damaged individuals
+damagedModern <- read_csv("modern_damage.csv")
+
+# Down-sampling for damaged individuals
+# NOT YET COMPUTED
+
+# Bind modern, ancient, and damaged modern samples
+samples <- bind_rows(modern, ancient)
+samplesWithDamaged <- bind_rows(damagedModern, modern, ancient) %>% filter(!SRR %in% damaged)
+samplesWithDamaged$OsteometricalSize[1:10] <- c("Big size", "Big size", "Big size", "Big size", "Small size", "Small size", "Small size", "Small size", "Small size", "Small size")
+
+
+```
+
+```{r}
+coverage_plot <- ancient %>% ggplot(aes(x=Coverage)) +
+  geom_histogram(color="black", fill="tomato", binwidth = 0.005) +
+  scale_x_continuous(breaks = pretty(ancient$Coverage, n = 20)) +
+  xlab("Coverage") + 
+  ylab("Frequency") +
+  theme_minimal()
+
+plot(coverage_plot)
+
+ggsave("coverage_plot.png", width = 6.5, height = 4)
+
+ancient %>% filter(Coverage > 0.1)
+
+```
+
+#### PCA Function
+
+Our PCA function creates and saves a PCA plot of the given sample, given a covariance matrix. This could be from the ANGSD or PCANGSD commands:
+
+```{r}
+pca <- function(sampleSubset, covMat, titleOfPlot, titlePNG){
+  # Performs PCA on a given sample subset based on a covariance matrix input
+  
+  # Read in covariance matrix
+  C <- as.matrix(read.table(covMat))
+  
+  # Perform PCA and add Principal Components to sampleSubset
+  pca_C <- prcomp(C)
+  sampleSubset <- sampleSubset %>% mutate(PC1 = pca_C$x[, "PC1"], PC2 = pca_C$x[, "PC2"])
+  #sampleSubset$PC1 <- -sampleSubset$PC1
+  #sampleSubset$PC2 <- -sampleSubset$PC2
+  
+  # Count damaged, modern and ancient samples
+  
+  # Damaged
+  no.Damaged <- sum(na.omit(startsWith(sampleSubset$SRR, "d")))
+  # Modern
+  no.Modern <- sum(na.omit(startsWith(sampleSubset$SRR, "SRR")))
+  # Ancient
+  no.Ancient <- sum(na.omit(startsWith(sampleSubset$ExtractionNumber, "C")))
+  
+  # Principal Component contributions
+  PC1.percent <- scales::percent(summary(pca_C)$importance[2,1])
+  PC2.percent <- scales::percent(summary(pca_C)$importance[2,2])
+
+  
+  # PCA plot with entire subset
+  pca_plot <- ggplot() + 
+    {if(no.Damaged != 0)geom_point(data=sampleSubset[1:no.Damaged,], aes(x=PC1, y=PC2, colour=factor(Species), size=3), shape=10)} +
+    {if(no.Modern != 0)geom_point(data=sampleSubset[(1+no.Damaged):(no.Damaged+no.Modern),], aes(x=PC1, y=PC2, colour=factor(Species)))} + 
+    labs(color = "Species") +
+    {if(no.Ancient != 0)geom_point(data=sampleSubset[(1+no.Damaged+no.Modern):(no.Damaged+no.Modern+no.Ancient),], aes(x=PC1, y=PC2, shape=factor(OsteometricalSize)))} +
+    labs(shape = "Osteometrical Size")  +
+    # Design
+
+    xlab(paste0("PC1 (", PC1.percent, ")" )) + 
+    ylab(paste0("PC2 (", PC2.percent, ")" )) + 
+    guides(size=F)  
+    #theme(legend.position = "none")
+ 
+  plot(pca_plot)
+  
+  # Save plot
+  ggsave(titlePNG, width = 6.5, height = 4)
+  return(sampleSubset)
+}
+```
+
+------------------------------------------------------------------------
+
+# 1) No damaged individuals
+
+### All samples
+
+**Error:** When performed on all individuals, we do not calculate PCs of size 116 (the amount of given samples), and instead 52. The problem is that we are using individuals with extremely low coverage. For example, we see that there are 26 individuals with a coverage below 0.001x:
+
+```{r}
+samples %>% filter(Coverage < 0.001)
+```
+
+It is perhaps, then, not so important to focus on PCA with all individuals, as $26/116 \approx 22\%$ of the data is of very low information.
+
+### Samples with coverage \>0.001x
+
+#### ANGSD
+
+```{r}
+samples_0.001 <- samples %>% filter(Coverage > 0.001)
+samples_0.001.pca <- pca(samples_0.001, "angsd/angsd_0.001.covMat", "PCA (>0.001X) using ANGSD", 
+    "pcaPlots/angsd_0.001.png")
+```
+
+```{r}
+
+```
+
+After filtering out the 26 individuals, we are able to compute our Principal Components with no missing values. That is, there is enough information to compute the covariance between two samples for all possible pairs of samples. In the plot created using ANGSD. we can comment on a few things:
+
+-   We see reasonable clustering of the ancient samples. There is wide spread along the PC2 axis, but as it accounts for a much smaller variance proportion than PC1, this is not so problematic.
+-   In general, we have the expected split of large and small samples between the Vicugna and Lama genera. There are a few exceptions, but this can be attributed to two things. The first is that these could be child samples. The second is that osteometrical methods aren't perfect, especially when dealing with ancient samples.
+-   We can observe potential gene flow between a Vicuna and a Lama genus. But this could of course be a sample of low coverage. And checking this with the script below, this is indeed the case:
+
+```{r}
+filter(samples_0.001.pca, between(PC1, 1, 2) & PC2 < 0)
+```
+
+-   There are two ancient samples that are halfway between the llamas and guanicos. Again, we can investigate this further by looking at their coverage:
+
+```{r}
+filter(samples_0.001.pca, PC1 < -1 & between(PC2,0,0.15 ))
+```
+
+This result is more promising, in that we have one individual with \>0.02x coverage. It is still low, and there is only one sample that fits this, but at least it slightly supports the theory that llamas were domesticated from guanicos.
+
+#### PCANGSD
+
+```{r}
+samples_0.001.geno.pca <- pca(samples_0.001, "pcangsd/PCANGSD_0.001.cov", "PCA (>0.001X) using PCANGSD", 
+    "pcaPlots/pcangsd_0.001.png")
+```
+
+The peculiarity of this plot can be attributed to the fact that applying genotype likelihoods to very low coverage data will impute values that are close to the mean (and hence why these values tend to zero). If we take the subset of those values close to the origin, we can see this:
+
+```{r}
+filter(samples_0.001.geno.pca, between(PC1,-1,1 ) & between(PC2,-0.5,0.5 ))
+```
+
+### Samples with coverage \>0.01x
+
+#### ANGSD
+
+```{r}
+samples_0.01 <- samples %>% filter(Coverage > 0.01)
+samples_0.01.pca <- pca(samples_0.01, "cov_matrices/angsd_0.01.covMat", "PCA (>0.01X) using ANGSD", 
+    "pcaPlots/angsd_0.01.png")
+
+mod <- filter(samples_0.01.pca, PC1 >0)$SRR[1:17]
+anc <- filter(samples_0.01.pca, PC1 >0)$ExtractionNumber[18:32]
+
+append(mod,anc)
+
+
+
+
+
+```
+
+```{r}
+lama_0.01 <- filter(samples_0.01.pca, PC1 > 0) 
+
+# Move row 1 to row 5
+row_1 <- lama_0.01 %>% slice(1)
+lama_0.01 <- lama_0.01[-1,] %>% add_row(!!!row_1, .before = 7)
+
+# Move rows 4 and 5 to rows 6 and 7
+row_4_5 <- lama_0.01 %>% slice(3:4)
+lama_0.01 <- lama_0.01[-c(3, 4),] %>% add_row(!!!row_4_5, .before = 6)
+
+lama_0.01.pca <- pca(lama_0.01, "lama.covMat", "PCA (>0.01X) using ANGSD", 
+    "pcaLamas.png")
+
+print(filter(lama_0.01.pca, PC2 > 0), n =15)
+```
+
+```{r}
+filter(samples_0.01.pca, between(PC1,0,2 ) & between(PC2,0.1,0.8) & !is.na(ExtractionNumber)) %>% count(Location, OsteometricalSize)
+```
+
+The clustering is much cleaner here. We can postulate based on the results:
+
+-   The ancient sample cluster of Lama is between the llamas and guanicos, though much closer to the guanicos. With the samples approximately 3000 years old, this could suggest the origin of the domestication of guanicos to llamas.
+
+-   The ancient sample cluster of Vicugna has a slight tendency towards the Lama genera. Having a look at these samples, we can see that they are estimated to be 3400-2300 yr B.P:
+
+    ```{r}
+    filter(samples_0.01.pca, between(PC1,-2,-1) & between(PC2,-0.1,0))
+
+    filter(samples_0.01.pca, between(PC1,-2,-1) & between(PC2,-0.22,0.1))
+    ```
+
+```{r}
+filter(samples_0.01.pca, between(PC1,-2,-1) & between(PC2,-0.4,-0.2))
+```
+
+These samples tend higher towards the alpaca population. Maybe this is indicative of the theory that alpacas derived from hybridization between llamas and vicuñas?
+
+#### PCANGSD
+
+```{r}
+pca(samples_0.01, "pcangsd/PCANGSD_0.01.cov", "PCA (>0.01X) using PCANGSD", 
+    "pcaPlots/pcangsd_0.01.png")
+```
+
+Again, with low coverage data, perhaps this plot is not so useful.
+
+### Samples with coverage \>0.1x
+
+#### ANGSD
+
+```{r}
+samples_0.1 <- samples %>% filter(Coverage > 0.1)
+samples_0.1.pca <- pca(samples_0.1, "angsd/angsd_0.1.covMat", "PCA (>0.1X) using ANGSD", "pcaPlots/angsd_0.1.png")
+```
+
+There is one promising individual centered between the guanicos and llamas
+
+```{r}
+filter(samples_0.1.pca, PC1 < -1, between(PC2, 0.1, 0.25))
+```
+
+This individual is, in fact, the ancient sample with the highest coverage. This is promising for the guanico-llama domestication.
+
+#### PCANGSD
+
+```{r}
+samples_0.1.geno.pca <- pca(samples_0.1, "pcangsd/PCANGSD_0.1.cov", "PCA (>0.1X) using PCANGSD", 
+    "pcaPlots/pcangsd_0.1.png")
+```
+
+This is virtually the same plot.
+
+------------------------------------------------------------------------
+
+# 2) With damaged individuals
+
+### Samples with coverage \>0.001x
+
+#### ANGSD
+
+This plot is not so significant, as we need to downsample the damaged individuals even further to mimic the low coverage of the ancient samples. \*\*This command is running now\*\*.
+
+```{r}
+samplesWithDamaged_0.001 <- samplesWithDamaged %>% filter(Coverage > 0.001)
+samplesWithDamaged_0.001.pca <- pca(samplesWithDamaged_0.001, "angsd/angsd_allWithDamaged.covMat", "PCA (>0.001X) using ANGSD (including damaged modern samples)", "pcaPlots/angsd_allWithDamaged_0.001.png")
+```
+
+#### PCANGSD
+
+Same as above.
+
+```{r}
+pca(samplesWithDamaged_0.001, "pcangsd/PCANGSD_allWithDamaged.cov", "PCA (>0.001X) using PCANGSD (including damaged modern samples)", "pcaPlots/PCANGSD_allWithDamaged.png")
+```
+
+### Samples with coverage \>0.001x (with 0.1 downsampling of damaged individuals)
+
+```{r}
+samplesWithDamaged_ds0.1.geno.pca <- pca(samplesWithDamaged_0.001, "angsd/angsd_allWithDamaged_ds0.1.covMat", "PCA (>0.001X) using ANGSD (including downsampled modern samples)", "pcaPlots/angsd_allWithDamaged_ds0.1.png")
+
+
+```
+
+Our downsampled damaged samples now tend towards the center, indicating too low a coverage for sound analysis.
+
+### Lamas with coverage \>0.01x
+
+Both the Lama and Vicugna separation calculations result in covariance matrices where every entry is NaN. \*\*I think I have spotted the mistake (after a few days!), and the commands are running now, so let's see.\*\*
+
+```{r}
+samples_LamaWithDamaged <- filter(samplesWithDamaged_0.001.pca, PC1 < 0 & Coverage > 0.01) %>%
+  filter(!row_number() %in% c(2, 4))
+
+samples_LamaWithDamaged <- bind_rows(samples_LamaWithDamaged[1:3,], samples[3,], samples_LamaWithDamaged[4:5,],  samples[7,], samples_LamaWithDamaged[6:30,])
+
+samples_LamaWithDamaged$SRR[c(1, 2)] <- c('SRR11905246', 'SRR11905250')
+
+samples_LamasWithDamaged_0.01.pca <- pca(samples_LamaWithDamaged, "angsd/angsd_LamaWithDamaged_ds0.1.covMat", "PCA (>0.01X) using ANGSD (Lama)", "pcaLamas.png")
+
+
+lama <- filter(samples_0.01.pca, PC1 < 0)
+pca(filter(samples_0.01.pca, PC1 > 0), "lama.covMat", "PCA (>0.01X) using ANGSD (Lama)", "pcaLamas.png")
+
+read_table("lama.covMat")
+
+```
+
+### Lamas with coverage \>0.1x
+
+```{r}
+samples_LamaWithDamaged_0.1 <- filter(samplesWithDamaged_0.001.pca, PC1 < 0 & Coverage > 0.1) %>%
+  filter(!row_number() %in% c(2, 4))
+
+samples_LamaWithDamaged_0.1 <- bind_rows(samples_LamaWithDamaged_0.1[1:3,], samples[3,], samples_LamaWithDamaged_0.1[4:5,],  samples_0.1[7,], samples_LamaWithDamaged_0.1[6:16,])
+
+samples_LamasWithDamaged_0.1.pca <- pca(samples_LamaWithDamaged_0.1, "angsd/angsd_LamaWithDamaged_0.1_HC.covMat", "PCA (>0.1X) using ANGSD (Lama)", "pcaLamasWithDamaged_0.1_HC.png")
+```
+
+### Vicugnas with coverage \>0.01x
+
+```{r}
+samples_VicugnaWithDamaged_0.01 <- filter(samplesWithDamaged_0.001, PC1 < 0)
+samples_VicugnaWithDamaged_0.01.pca <- pca(samples_VicugnaWithDamaged_0.01, "output_damageVicunaMinusRepeat_0.01.covMat", "PCA (>0.001X) using ANGSD (Damaged individals + All)", "pcaLamasWithDamaged.png")
+```
+
+## Just one damaged sample
+
+### Llama
+
+```{r}
+samples_dLama <- bind_rows(damagedModern[1,], samples_0.01[1,], samples_0.01[3:67,])
+dLama.pca <- pca(samples_dLama, "angsd/oneDamaged/llama.covMat", "PCA (>0.01x) with one damaged llama", "pca_dLama.png")
+```
+
+```{r}
+samples_dLama <- bind_rows(damagedModern[1,], samples_0.01[1,], samples_0.01[3:67,])
+dLama.pca <- pca(samples_dLama, "angsd/oneDamaged/llama2.covMat", "PCA (>0.01x) with one damaged llama", "pca_dLama2.png")
+```
+
+### Guanaco
+
+```{r}
+samples_dGuanaco <- bind_rows(damagedModern[3,], samples_0.01[1:5,], samples_0.01[7:67,])
+dGuanaco.pca <- pca(samples_dGuanaco, "angsd/oneDamaged/guanaco.covMat", "PCA (>0.01x) with one damaged guanaco", "pca_dGuanaco.png")
+
+```
+
+```{r}
+samples_dGuanaco <- bind_rows(damagedModern[3,], samples_0.01[1:5,], samples_0.01[7:67,])
+dGuanaco.pca <- pca(samples_dGuanaco, "angsd/oneDamaged/guanaco2.covMat", "PCA (>0.01x) with one damaged guanaco", "pca_dGuanaco2.png")
+```
+
+### Vicuña
+
+```{r}
+samples_dVicuna <- bind_rows(damagedModern[9,], samples_0.01[1:15,], samples_0.01[17:67,])
+dVicuna.pca <- pca(samples_dVicuna, "angsd/oneDamaged/vicuna.covMat", "PCA (>0.01x) with one damaged vicuna", "pca_dVicuna.png")
+```
+
+```{r}
+samples_dVicuna <- bind_rows(damagedModern[9,], samples_0.01[1:15,], samples_0.01[17:67,])
+dVicuna.pca <- pca(samples_dVicuna, "angsd/oneDamaged/vicuna2.covMat", "PCA (>0.01x) with one damaged vicuna", "pca_dVicuna2.png")
+```
+
+### Cacsilensis
+
+```{r}
+samples_dCacsilensis <- bind_rows(damagedModern[11,], samples_0.01[1:27,], samples_0.01[29:67,])
+dVicuna.pca <- pca(samples_dCacsilensis, "cacsilensis2.covMat", "PCA (>0.01x) with one damaged cacsilensis", "pca_dCacsilensis2.png")
+```
+
+```{r}
+samples_0.01 <- samples %>% filter(Coverage > 0.01)
+samples_0.01.pca <- pca(samples_0.01, "angsd/angsd_0.01.covMat", "PCA (>0.01X) using ANGSD", 
+    "pcaPlots/angsd_0.01.png")
+
+# filter(samples_0.01.pca, PC1 < -1 & between(PC2,-0.1,0 ))
+```
+
+------------------------------------------------------------------------
+
+### Bash Scripts
+
+The PCA using ANGSD is performed with the following script:
+
+```{bash eval=FALSE}
+#!/bin/sh
+
+module load angsd/0.940
+
+# 1: Output name + location
+# 2: Bamlist
+
+angsd -minmapQ 30 -minQ 30 -doCounts 1 -GL 2 -out $1 -nThreads 10 -doGlf 2 -doMajorMinor 1 \
+-rmtrans 1 -doMaf 2 -SNP_pval 1e-6 -b $2 \
+-ref ../../data/Reference/GCF_000164845.3_VicPac3.1_genomic.fna \
+-rf ../../data/Reference/GCF_000164845.3_VicPac3.1_genomic_autosomes_10Mb.txt \
+-minmaf 0.05 -skiptriallelic 1 -uniqueonly 1 -minind 30 -dohaplocall 2 -doIBS 2 \
+-minminor 2 -docov 1 -makematrix 1
+```
+
+This has two inputs:
+
+1)  The name and location of the output
+2)  The list of individuals on which to perform PCA (saved as a `.bamlist`)
+
+When this is complete, we also apply the PCANGSD script:
+
+```{bash eval=FALSE}
+pcangsd -beagle BEAGLEFILE -o OUTPUT_NAME_AND_LOCATION
+```
